@@ -19,7 +19,6 @@ from response_builder import (
 )
 from stream_handler import StreamHandler, format_sse_message, format_sse_done
 
-# Setup logging
 logging.basicConfig(
     level=getattr(logging, config.LOG_LEVEL),
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -46,7 +45,6 @@ class ChatCompletionRequest(BaseModel):
 
 @app.get("/v1/models")
 async def list_models():
-    """List available models - proxy to backend"""
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.get(f"{config.BACKEND_URL}/v1/models")
         return resp.json()
@@ -54,14 +52,11 @@ async def list_models():
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: ChatCompletionRequest):
-    """Handle chat completions with function calling support"""
     logger.info(f"Received request: model={request.model}, has_tools={request.tools is not None}")
     
-    # Check if tools are provided
     has_tools = request.tools and len(request.tools) > 0
     
     if has_tools:
-        # Inject ReAct prompt
         modified_messages = inject_react_prompt(
             messages=request.messages,
             tools=request.tools
@@ -70,7 +65,6 @@ async def chat_completions(request: ChatCompletionRequest):
     else:
         modified_messages = request.messages
     
-    # Build backend request
     backend_request = {
         "model": request.model,
         "messages": modified_messages,
@@ -82,7 +76,6 @@ async def chat_completions(request: ChatCompletionRequest):
     if request.max_tokens is not None:
         backend_request["max_tokens"] = request.max_tokens
     
-    # Add stop sequences for ReAct
     if has_tools:
         stop = request.stop or []
         stop.extend(config.STOP_SEQUENCES)
@@ -101,7 +94,6 @@ async def handle_non_streaming_request(
     model: str,
     has_tools: bool
 ) -> JSONResponse:
-    """Handle non-streaming request"""
     async with httpx.AsyncClient(timeout=config.REQUEST_TIMEOUT) as client:
         try:
             resp = await client.post(
@@ -117,7 +109,6 @@ async def handle_non_streaming_request(
     if not has_tools:
         return JSONResponse(content=result)
     
-    # Parse response for tool calls
     content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
     logger.debug(f"Backend response content: {content[:200]}...")
     
@@ -125,14 +116,12 @@ async def handle_non_streaming_request(
     
     if action:
         if action.is_final:
-            # Final answer
             response = build_chat_completion_response(
                 model=model,
                 content=str(action.action_input),
                 usage=result.get("usage")
             )
         else:
-            # Tool call
             tool_call = build_tool_call(
                 action_name=action.action_name,
                 action_input=action.action_input
@@ -143,7 +132,6 @@ async def handle_non_streaming_request(
                 usage=result.get("usage")
             )
     else:
-        # No action detected, return as-is
         response = build_chat_completion_response(
             model=model,
             content=content,
@@ -158,7 +146,6 @@ async def handle_streaming_request(
     model: str,
     has_tools: bool
 ):
-    """Handle streaming request"""
     async def generate():
         handler = StreamHandler(model)
         
@@ -173,7 +160,7 @@ async def handle_streaming_request(
                         if not line or not line.startswith("data: "):
                             continue
                         
-                        data = line[6:]  # Remove "data: " prefix
+                        data = line[6:]
                         if data == "[DONE]":
                             break
                         
@@ -185,13 +172,11 @@ async def handle_streaming_request(
                                 for response_chunk in handler.process_chunk(content):
                                     yield format_sse_message(response_chunk)
                             elif content:
-                                yield f"data: {data}
-
-"
+                                sse_line = "data: " + data + chr(10) + chr(10)
+                                yield sse_line
                         except json.JSONDecodeError:
                             continue
                 
-                # Finalize
                 if has_tools:
                     for response_chunk in handler.finalize():
                         yield format_sse_message(response_chunk)
@@ -214,7 +199,6 @@ async def handle_streaming_request(
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
     return {"status": "healthy", "version": "1.0.0"}
 
 
