@@ -1,0 +1,17 @@
+version: "3.8"
+
+services:
+  fc-proxy:
+    build: .
+    container_name: fc-proxy
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - BACKEND_URL=http://localhost:1025
+      - BACKEND_MODEL=deepseek-r1-distill-70b
+      - PROXY_HOST=0.0.0.0
+      - PROXY_PORT=1030
+      - REQUEST_TIMEOUT=300
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./logs:/app/logs
