@@ -24,15 +24,12 @@ class StreamHandler:
         self.state = StreamState()
     
     def process_chunk(self, chunk: str) -> Generator[Dict[str, Any], None, None]:
-        """Process a streaming chunk and yield response chunks"""
         self.state.buffer += chunk
         
-        # Check if we have a complete action
         action = OutputParser.extract_action(self.state.buffer)
         
         if action and not self.state.tool_call_sent:
             if action.is_final:
-                # Final answer - yield content
                 yield build_streaming_chunk(
                     model=self.model,
                     content=str(action.action_input),
@@ -44,19 +41,16 @@ class StreamHandler:
                 )
                 self.state.tool_call_sent = True
             else:
-                # Tool call - yield tool_calls
                 tool_call = build_tool_call(
                     action_name=action.action_name,
                     action_input=action.action_input
                 )
                 
-                # First chunk with role
                 yield build_streaming_chunk(
                     model=self.model,
                     is_first=True
                 )
                 
-                # Tool call chunk
                 yield build_streaming_chunk(
                     model=self.model,
                     tool_calls=[{
@@ -70,7 +64,6 @@ class StreamHandler:
                     }]
                 )
                 
-                # Arguments chunk
                 yield build_streaming_chunk(
                     model=self.model,
                     tool_calls=[{
@@ -81,7 +74,6 @@ class StreamHandler:
                     }]
                 )
                 
-                # Finish chunk
                 yield build_streaming_chunk(
                     model=self.model,
                     finish_reason="tool_calls"
@@ -89,12 +81,9 @@ class StreamHandler:
                 self.state.tool_call_sent = True
     
     def finalize(self) -> Generator[Dict[str, Any], None, None]:
-        """Finalize stream and yield any remaining content"""
         if not self.state.tool_call_sent:
-            # No tool call detected, return as regular content
             content = self.state.buffer.strip()
             if content:
-                # Remove thinking tags if present
                 content = re.sub(r"<think>.*?</think>\s*", "", content, flags=re.DOTALL)
                 
                 yield build_streaming_chunk(
@@ -109,14 +98,9 @@ class StreamHandler:
 
 
 def format_sse_message(data: Dict[str, Any]) -> str:
-    """Format data as SSE message"""
-    return f"data: {json.dumps(data, ensure_ascii=False)}
-
-"
+    json_str = json.dumps(data, ensure_ascii=False)
+    return "data: " + json_str + chr(10) + chr(10)
 
 
 def format_sse_done() -> str:
-    """Format SSE done message"""
-    return "data: [DONE]
-
-"
+    return "data: [DONE]" + chr(10) + chr(10)

@@ -37,7 +37,6 @@ Begin! Reminder to ALWAYS respond with a valid json blob of a single action. Use
 
 
 def format_tool_for_prompt(tool: Dict[str, Any]) -> Dict[str, Any]:
-    """Format a single tool for the prompt"""
     func = tool.get("function", tool)
     return {
         "name": func.get("name", ""),
@@ -50,9 +49,6 @@ def convert_tools_to_react_prompt(
     tools: List[Dict[str, Any]],
     instruction: str = ""
 ) -> str:
-    """
-    Convert OpenAI tools format to ReAct system prompt
-    """
     if not tools:
         return ""
     
@@ -72,9 +68,6 @@ def inject_react_prompt(
     tools: List[Dict[str, Any]],
     instruction: str = ""
 ) -> List[Dict[str, Any]]:
-    """
-    Inject ReAct prompt into messages
-    """
     if not tools:
         return messages
     
@@ -86,11 +79,10 @@ def inject_react_prompt(
         if msg.get("role") == "system":
             has_system = True
             original_content = msg.get("content", "")
+            combined = react_prompt + chr(10) + chr(10) + original_content if original_content else react_prompt
             new_messages.append({
                 "role": "system",
-                "content": f"{react_prompt}
-
-{original_content}" if original_content else react_prompt
+                "content": combined
             })
         else:
             new_messages.append(msg)
@@ -106,9 +98,8 @@ def format_tool_result_message(
     tool_name: str,
     result: str
 ) -> Dict[str, Any]:
-    """Format tool result as observation message"""
+    content = "Observation: " + result + chr(10) + "Thought:"
     return {
         "role": "user",
-        "content": f"Observation: {result}
-Thought:"
+        "content": content
     }
