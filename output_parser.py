@@ -33,6 +33,7 @@ class OutputParser:
     
     @classmethod
     def extract_action(cls, output: str) -> Optional[ParsedAction]:
+        # Method 1: Try JSON in code blocks
         code_block_pattern = re.compile(r"```(?:json)?\s*([^`]+)```", re.DOTALL)
         matches = code_block_pattern.findall(output)
         
@@ -41,7 +42,8 @@ class OutputParser:
             if action_data and "action" in action_data:
                 return cls._create_parsed_action(action_data, output)
         
-        json_pattern = re.compile(r"\{[^{}]*action[^{}]*\}", re.DOTALL)
+        # Method 2: Try inline JSON with action key
+        json_pattern = re.compile(r"\{[^{}]*\"action\"[^{}]*\}", re.DOTALL)
         json_matches = json_pattern.findall(output)
         
         for match in json_matches:
@@ -49,6 +51,33 @@ class OutputParser:
             if action_data and "action" in action_data:
                 return cls._create_parsed_action(action_data, output)
         
+        # Method 3: Try Action: and Action_input: format (DeepSeek style)
+        action_pattern = re.compile(r"Action:\s*(\w+)", re.IGNORECASE)
+        action_input_pattern = re.compile(r"Action[_\s]?[Ii]nput:\s*(\{.*?\}|\S+)", re.DOTALL | re.IGNORECASE)
+        
+        action_match = action_pattern.search(output)
+        if action_match:
+            action_name = action_match.group(1).strip()
+            action_input = {}
+            
+            input_match = action_input_pattern.search(output)
+            if input_match:
+                input_str = input_match.group(1).strip()
+                try:
+                    action_input = json.loads(input_str)
+                except:
+                    action_input = {"input": input_str}
+            
+            if action_name.lower() not in ["", "none"]:
+                return ParsedAction(
+                    action_name=action_name,
+                    action_input=action_input,
+                    thought=cls._extract_thought(output),
+                    raw_output=output,
+                    is_final=action_name.lower() == "final answer"
+                )
+        
+        # Method 4: Try nested JSON extraction
         try:
             start = output.find("{")
             if start != -1:
@@ -70,19 +99,22 @@ class OutputParser:
         return None
     
     @classmethod
+    def _extract_thought(cls, output: str) -> str:
+        thought_pattern = re.compile(r"Thought:\s*(.+?)(?=Action:|Observation:|$)", re.DOTALL | re.IGNORECASE)
+        thought_match = thought_pattern.search(output)
+        if thought_match:
+            return thought_match.group(1).strip()
+        return ""
+    
+    @classmethod
     def _create_parsed_action(cls, action_data: Dict[str, Any], raw_output: str) -> ParsedAction:
         action_name = action_data.get("action", "")
         action_input = action_data.get("action_input", {})
-        thought = ""
-        thought_pattern = re.compile(r"Thought:\s*(.+?)(?=Action:|Observation:|$)", re.DOTALL | re.IGNORECASE)
-        thought_match = thought_pattern.search(raw_output)
-        if thought_match:
-            thought = thought_match.group(1).strip()
         is_final = action_name.lower() == "final answer"
         return ParsedAction(
             action_name=action_name,
             action_input=action_input,
-            thought=thought,
+            thought=cls._extract_thought(raw_output),
             raw_output=raw_output,
             is_final=is_final
         )
