@@ -1,12 +1,12 @@
 """
 Response Builder
-Converts parsed actions to OpenAI tool_calls format
+Converts parsed actions to OpenAI function_call/tool_calls format
+Supports both old (function_call) and new (tool_calls) formats
 """
 import json
 import uuid
 import time
 from typing import Dict, Any, List, Optional
-from dataclasses import dataclass, asdict
 
 
 def generate_tool_call_id() -> str:
@@ -14,12 +14,35 @@ def generate_tool_call_id() -> str:
     return f"call_{uuid.uuid4().hex[:24]}"
 
 
+def build_function_call(
+    action_name: str,
+    action_input: Any
+) -> Dict[str, Any]:
+    """Build old-style function_call object"""
+    # Ensure action_input is a string (JSON)
+    if isinstance(action_input, dict):
+        arguments = json.dumps(action_input, ensure_ascii=False)
+    elif isinstance(action_input, str):
+        try:
+            parsed = json.loads(action_input)
+            arguments = json.dumps(parsed, ensure_ascii=False)
+        except:
+            arguments = json.dumps({"input": action_input}, ensure_ascii=False)
+    else:
+        arguments = json.dumps({"input": str(action_input)}, ensure_ascii=False)
+    
+    return {
+        "name": action_name,
+        "arguments": arguments
+    }
+
+
 def build_tool_call(
     action_name: str,
     action_input: Any,
     tool_call_id: Optional[str] = None
 ) -> Dict[str, Any]:
-    """Build a single tool call object"""
+    """Build a single tool call object (new format)"""
     if tool_call_id is None:
         tool_call_id = generate_tool_call_id()
     
@@ -27,7 +50,6 @@ def build_tool_call(
     if isinstance(action_input, dict):
         arguments = json.dumps(action_input, ensure_ascii=False)
     elif isinstance(action_input, str):
-        # Try to parse and re-serialize for consistency
         try:
             parsed = json.loads(action_input)
             arguments = json.dumps(parsed, ensure_ascii=False)
@@ -50,10 +72,16 @@ def build_chat_completion_response(
     model: str,
     content: Optional[str] = None,
     tool_calls: Optional[List[Dict[str, Any]]] = None,
+    function_call: Optional[Dict[str, Any]] = None,
     finish_reason: str = "stop",
-    usage: Optional[Dict[str, int]] = None
+    usage: Optional[Dict[str, int]] = None,
+    use_function_call_format: bool = False
 ) -> Dict[str, Any]:
-    """Build OpenAI-compatible chat completion response"""
+    """Build OpenAI-compatible chat completion response
+    
+    Args:
+        use_function_call_format: If True, use old function_call format instead of tool_calls
+    """
     message = {"role": "assistant"}
     
     if content:
@@ -61,9 +89,21 @@ def build_chat_completion_response(
     else:
         message["content"] = None
     
-    if tool_calls:
-        message["tool_calls"] = tool_calls
-        finish_reason = "tool_calls"
+    if function_call:
+        message["function_call"] = function_call
+        finish_reason = "function_call"
+    elif tool_calls:
+        if use_function_call_format and len(tool_calls) > 0:
+            # Convert tool_calls to function_call format
+            tc = tool_calls[0]
+            message["function_call"] = {
+                "name": tc["function"]["name"],
+                "arguments": tc["function"]["arguments"]
+            }
+            finish_reason = "function_call"
+        else:
+            message["tool_calls"] = tool_calls
+            finish_reason = "tool_calls"
     
     response = {
         "id": f"chatcmpl-{uuid.uuid4().hex[:29]}",
@@ -93,8 +133,10 @@ def build_streaming_chunk(
     model: str,
     content: Optional[str] = None,
     tool_calls: Optional[List[Dict[str, Any]]] = None,
+    function_call: Optional[Dict[str, Any]] = None,
     finish_reason: Optional[str] = None,
-    is_first: bool = False
+    is_first: bool = False,
+    use_function_call_format: bool = False
 ) -> Dict[str, Any]:
     """Build streaming response chunk"""
     delta = {}
@@ -105,8 +147,17 @@ def build_streaming_chunk(
     if content is not None:
         delta["content"] = content
     
-    if tool_calls:
-        delta["tool_calls"] = tool_calls
+    if function_call:
+        delta["function_call"] = function_call
+    elif tool_calls:
+        if use_function_call_format and len(tool_calls) > 0:
+            tc = tool_calls[0]
+            delta["function_call"] = {
+                "name": tc["function"]["name"],
+                "arguments": tc["function"]["arguments"]
+            }
+        else:
+            delta["tool_calls"] = tool_calls
     
     return {
         "id": f"chatcmpl-{uuid.uuid4().hex[:29]}",

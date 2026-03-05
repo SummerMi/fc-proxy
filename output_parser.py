@@ -1,4 +1,3 @@
-
 import re
 import json
 from typing import Dict, Any, Optional, List
@@ -30,44 +29,62 @@ class OutputParser:
                 return json.loads(fixed)
             except:
                 return None
-    
+
     @classmethod
-    def extract_action(cls, output: str) -> Optional[ParsedAction]:
-        # Method 1: Try JSON in code blocks
-        code_block_pattern = re.compile(r"```(?:json)?\s*([^`]+)```", re.DOTALL)
-        matches = code_block_pattern.findall(output)
-        
+    def _select_action_from_matches(
+        cls,
+        matches: List[str],
+        output: str,
+        prefer_last: bool
+    ) -> Optional[ParsedAction]:
+        selected = None
         for match in matches:
             action_data = cls.parse_action_json(match)
             if action_data and "action" in action_data:
-                return cls._create_parsed_action(action_data, output)
-        
+                selected = cls._create_parsed_action(action_data, output)
+                if not prefer_last:
+                    return selected
+        return selected
+
+    @classmethod
+    def extract_action(cls, output: str, prefer_last: bool = False) -> Optional[ParsedAction]:
+        # Method 1: Try JSON in code blocks
+        code_block_pattern = re.compile(r"```(?:json)?\s*([^`]+)```", re.DOTALL)
+        matches = code_block_pattern.findall(output)
+        action = cls._select_action_from_matches(matches, output, prefer_last)
+        if action:
+            return action
+
         # Method 2: Try inline JSON with action key
         json_pattern = re.compile(r"\{[^{}]*\"action\"[^{}]*\}", re.DOTALL)
         json_matches = json_pattern.findall(output)
-        
-        for match in json_matches:
-            action_data = cls.parse_action_json(match)
-            if action_data and "action" in action_data:
-                return cls._create_parsed_action(action_data, output)
-        
+        action = cls._select_action_from_matches(json_matches, output, prefer_last)
+        if action:
+            return action
+
         # Method 3: Try Action: and Action_input: format (DeepSeek style)
         action_pattern = re.compile(r"Action:\s*(\w+)", re.IGNORECASE)
         action_input_pattern = re.compile(r"Action[_\s]?[Ii]nput:\s*(\{.*?\}|\S+)", re.DOTALL | re.IGNORECASE)
-        
-        action_match = action_pattern.search(output)
+
+        action_match = None
+        if prefer_last:
+            for match in action_pattern.finditer(output):
+                action_match = match
+        else:
+            action_match = action_pattern.search(output)
+
         if action_match:
             action_name = action_match.group(1).strip()
             action_input = {}
-            
-            input_match = action_input_pattern.search(output)
+
+            input_match = action_input_pattern.search(output, action_match.end())
             if input_match:
                 input_str = input_match.group(1).strip()
                 try:
                     action_input = json.loads(input_str)
                 except:
                     action_input = {"input": input_str}
-            
+
             if action_name.lower() not in ["", "none"]:
                 return ParsedAction(
                     action_name=action_name,
@@ -76,16 +93,20 @@ class OutputParser:
                     raw_output=output,
                     is_final=action_name.lower() == "final answer"
                 )
-        
+
         # Method 4: Try nested JSON extraction
         try:
             start = output.find("{")
+            if prefer_last:
+                start = output.rfind("{")
             if start != -1:
                 depth = 0
                 end = start
                 for i, c in enumerate(output[start:], start):
-                    if c == "{": depth += 1
-                    elif c == "}": depth -= 1
+                    if c == "{":
+                        depth += 1
+                    elif c == "}":
+                        depth -= 1
                     if depth == 0:
                         end = i + 1
                         break
@@ -95,17 +116,17 @@ class OutputParser:
                     return cls._create_parsed_action(action_data, output)
         except:
             pass
-        
+
         return None
-    
+
     @classmethod
     def _extract_thought(cls, output: str) -> str:
-        thought_pattern = re.compile(r"Thought:\s*(.+?)(?=Action:|Observation:|$)", re.DOTALL | re.IGNORECASE)
+        thought_pattern = re.compile(r"Thought:\s*(.+?)(?=Action:|Observation:|$$)", re.DOTALL | re.IGNORECASE)
         thought_match = thought_pattern.search(output)
         if thought_match:
             return thought_match.group(1).strip()
         return ""
-    
+
     @classmethod
     def _create_parsed_action(cls, action_data: Dict[str, Any], raw_output: str) -> ParsedAction:
         action_name = action_data.get("action", "")
@@ -118,12 +139,12 @@ class OutputParser:
             raw_output=raw_output,
             is_final=is_final
         )
-    
+
     @classmethod
     def is_tool_call(cls, output: str) -> bool:
         action = cls.extract_action(output)
         return action is not None and not action.is_final
-    
+
     @classmethod
     def extract_final_answer(cls, output: str) -> Optional[str]:
         action = cls.extract_action(output)
